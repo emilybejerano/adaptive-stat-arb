@@ -1,0 +1,20 @@
+name: elen4904
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pandas
+  - numpy
+  - scikit-learn
+  - statsmodels
+  - matplotlib
+  - seaborn
+  - jupyter
+  - pip
+  - pip:
+    - yfinance
+    - pandas-datareader
+    - xgboost
+    - torch
+    - gymnasium
