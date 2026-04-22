@@ -9,7 +9,7 @@ Statistical arbitrage strategies rely on mean-reversion: when a spread between r
 
 The problem: **~60% of these signals are structural traps** where the spread continues diverging instead of reverting, particularly during regime shifts (COVID crash, rate hikes).
 
-This project builds a **Deep Q-Network (DQN)** execution layer that learns when market conditions support mean-reversion and when they don't, using Ornstein-Uhlenbeck dynamics and macroeconomic indicators as state features.
+This project builds a **Deep Q-Network (DQN)** execution layer that learns when market conditions support mean-reversion and when they don't, using Ornstein-Uhlenbeck dynamics and macroeconomic indicators as state features.∑
 
 ---
 
