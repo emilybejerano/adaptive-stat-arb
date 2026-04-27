@@ -1,0 +1,59 @@
+model:
+  cluster_num: 30
+  n_bins: 64
+  num_features: 36  
+  hidden_dim: 128
+  depth: 2
+  heads: 2
+  pre_norm: True
+  use_simple_rmsnorm: True
+  cls_init: 'ones'
+  dropout_mask: 0.1
+  augment_std: 0.1
+  masking_ratio: 0.1
+  predict_ou_params: True  # OU process 파라미터 (μ, σ, θ) 직접 예측
+
+data:
+  monthly_data_dir: "/workspace/ICAIF-pairs/data/monthly"
+  start_month: "1999-12"
+  end_month: "2023-12"  # 
+  clipping_method: None # 'percentile'  # 'percentile' or 'iqr'
+  #clipping_percentiles: [1, 99]  # Percentiles for clipping
+  num_imputation: 'median'  # Imputation strategy for numerical data
+  cat_imputation: 'mode'    # Imputation strategy for categorical data
+  normalize: True           # Whether to normalize numerical data
+  scaler_type: 'standard'   # 'standard' or 'minmax'
+
+train:
+  epochs: 200
+  batch_size: 1024
+  lr: 0.002
+  warmup_steps: 1000
+  weight_decay: 0.01
+  clip_grad_norm: 1.0
+  saving_path: 'res/pinn'
+  num_workers: 4
+  device: 'cuda'
+  seed: 42
+  model_saving_strategy: 'best'  # 'best' or 'last'
+  pin_memory: True
+  persist_workers: True
+  patience: 20  # Early stopping patience
+
+pinn:
+  lambda_mean_reversion: 1  #! Weight for mean reversion loss
+  min_cluster_size: 3  # Minimum cluster size for mean reversion
+  use_predicted_params: True # Physics-informed loss 사용 여부
+  
+  # 데이터 윈도우 설정
+  price_window: 12  # Number of past months to use for returns history
+  daily_window: 22  # Number of past trading days (월별 훈련에서는 사용 안 함)
+  
+  # 데이터 경로
+  monthly_returns_path: 'data/log_returns_by_month.pkl'  # 월별 수익률 데이터 (주 데이터)
+  daily_returns_path: 'data/daily_returns.pkl'  # Daily log returns data (월별 훈련에서는 미사용)
+  
+  # 월별 훈련 설정 
+  use_daily_for_mr: False  # 월별 데이터로 Mean Reversion 계산
+  dt: 0.0833  # 1/12 for monthly data (월별 시간 간격)
+  mr_warmup_ratio: 0 # .3  # Ratio of epochs for mean reversion warmup
