@@ -1,26 +1,3 @@
-"""
-2×2 Ablation: Clustering Method × Threshold Method
-
-  Rows:    ORCA clusters vs K-means clusters
-  Columns: Static 1.0σ threshold vs DQN adaptive threshold
-
-This script:
-  1. Loads the trained ORCA model + price data
-  2. Gets cluster assignments (ORCA + K-means) at end of training period
-  3. Forms within-cluster pairs, filters by ADF cointegration
-  4. Computes spreads (vectorized rolling OLS) + OU parameters
-  5. Trains a DQN threshold agent on each set of pairs
-  6. Backtests all 4 cells: {ORCA, K-means} × {static, DQN}
-  7. Prints comparison table with Wilcoxon tests
-
-Prerequisites:
-  - Run orca_yfinance.py first (produces datasets/orca_model.pt, orca_artifacts.pkl,
-    orca_prices_expanded.parquet)
-
-Usage:
-  python ablation_2x2.py
-"""
-
 import numpy as np
 import pandas as pd
 import torch
@@ -44,9 +21,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Device: {device}")
 
 
-# ============================================================
 # TRADING CONSTANTS (same as train_adaptive_threshold.py)
-# ============================================================
 THRESHOLDS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
 K_ACTIONS = len(THRESHOLDS)
 CAPITAL = 100000.0
@@ -63,9 +38,7 @@ VAL_START = '2019-01-01'; VAL_END = '2019-12-31'
 TEST_START = '2020-01-01'; TEST_END = '2023-12-31'
 
 
-# ============================================================
 # 1. LOAD DATA + ORCA MODEL
-# ============================================================
 
 def load_orca_model():
     """Load trained ORCA model from orca_yfinance.py output."""
@@ -129,9 +102,7 @@ def get_daily_prices(valid_tickers):
     return prices
 
 
-# ============================================================
 # 2. CLUSTER -> PAIRS (with ADF filter)
-# ============================================================
 
 def clusters_to_pairs(cluster_assignments, daily_prices, train_end, min_common=500, adf_pvalue=0.10):
     """
@@ -190,9 +161,7 @@ def clusters_to_pairs(cluster_assignments, daily_prices, train_end, min_common=5
     return cointegrated
 
 
-# ============================================================
 # 3. COMPUTE SPREADS + OU PARAMS (vectorized)
-# ============================================================
 
 def compute_spreads(pair_names, daily_prices, window=252):
     """
@@ -294,9 +263,7 @@ def compute_ou_params(all_spreads, dt=1/252):
     return all_ou
 
 
-# ============================================================
 # 4. DQN THRESHOLD AGENT (from train_adaptive_threshold.py)
-# ============================================================
 
 class QNetwork(nn.Module):
     """Paper: 3-layer MLP with {20, 10, K} neurons."""
@@ -364,9 +331,7 @@ class DQNAgent:
         self.memory.append(Transition(*args))
 
 
-# ============================================================
 # 5. TRAINING + BACKTESTING FUNCTIONS
-# ============================================================
 
 def get_market_context(vix_series, ou_df, date):
     """Get normalized VIX and theta for state."""
@@ -662,9 +627,7 @@ def run_full_backtest(pair_names, all_spreads, all_ou, df_prices, agent=None, th
     return sharpes, traps, trades_count
 
 
-# ============================================================
 # 6. MAIN: RUN THE 2×2 ABLATION
-# ============================================================
 
 def main():
     print("=" * 70)
@@ -834,23 +797,6 @@ def main():
     print(f"\n  ORCA vs K-means (with static threshold):")
     print(f"    ORCA:    {len(orca_static_sh)} pairs, mean Sharpe {np.mean(list(orca_static_sh.values())):+.3f}")
     print(f"    K-means: {len(km_static_sh)} pairs, mean Sharpe {np.mean(list(km_static_sh.values())):+.3f}")
-
-    print(f"\n{'='*75}")
-    print(f"  INTERPRETATION GUIDE")
-    print(f"{'='*75}")
-    print(f"""
-  The 2×2 answers three questions:
-
-  1. Does DQN improve execution? (compare columns within each row)
-     → If DQN column has lower trap rate, the adaptive threshold helps.
-
-  2. Does ORCA improve pair selection? (compare rows within each column)
-     → If ORCA row has better Sharpe, physics-informed clustering helps.
-
-  3. Do they compound? (compare ORCA+DQN vs K-means+Static)
-     → If the diagonal dominates, the full system is greater than its parts.
-    """)
-
 
 if __name__ == '__main__':
     main()

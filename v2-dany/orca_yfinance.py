@@ -1,27 +1,3 @@
-"""
-ORCA (Ornstein-Uhlenbeck Reversion and Contrastive Arbitrage)
-Adapted for yfinance data.
-
-Paper: Kim, Na & Song (ICAIF 2025)
-"Deep Mean-Reversion: A Physics-Informed Contrastive Approach to Pairs Trading"
-
-Original uses CRSP/Compustat (3000+ stocks, 36 features: 24 momentum + 12 fundamentals).
-This adaptation uses yfinance (~46 NYSE tickers) with:
-  - 12 momentum features (mom1..mom12, shortened from 24 due to fewer tickers)
-  - 6 proxy fundamental features derived from price/volume data
-  Total: 18 features per stock per month
-
-Pipeline:
-  1. Download prices via yfinance
-  2. Compute monthly returns + features
-  3. Train ORCA (contrastive + PINN) to cluster stocks
-  4. Run the paper's Algorithm 1 (cluster-based mean-reversion strategy)
-  5. Compare: K-means baseline vs ORCA
-
-Usage:
-  python orca_yfinance.py
-"""
-
 import numpy as np
 import pandas as pd
 import torch
@@ -43,9 +19,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Device: {device}")
 
 
-# ============================================================
 # 1. DATA: Download + Feature Engineering
-# ============================================================
 
 # Expanded universe: ~120 liquid large-cap names across 11 GICS sectors
 # Target: ~8-12 stocks per cluster with K=15, giving PINN enough mass
@@ -80,7 +54,6 @@ TICKERS = [
 
 
 def download_data(tickers, start='2005-01-01', end='2023-12-31', cache_path='datasets/orca_prices.parquet'):
-    """Download daily price + volume data, cache to parquet."""
     if os.path.exists(cache_path):
         print(f"Loading cached prices from {cache_path}")
         return pd.read_parquet(cache_path)
@@ -107,16 +80,7 @@ def download_data(tickers, start='2005-01-01', end='2023-12-31', cache_path='dat
 
 
 def compute_monthly_features(raw_data, tickers, n_mom=12):
-    """
-    Compute per-stock monthly features following the paper:
-      - Momentum features: mom1 = r_{t-1}, mom_i = cumulative return over i months
-      - Proxy fundamentals from price/volume (since we lack Compustat)
-
-    Returns:
-      features: dict of {month_end_date: DataFrame(n_stocks × n_features)}
-      returns: dict of {month_end_date: Series(n_stocks)}  — next month's return
-    """
-    # Extract close prices per ticker
+   # Extract close prices per ticker
     close_cols = {t: f'{t}_close' for t in tickers if f'{t}_close' in raw_data.columns}
     vol_cols = {t: f'{t}_volume' for t in tickers if f'{t}_volume' in raw_data.columns}
     valid_tickers = sorted(set(close_cols.keys()) & set(vol_cols.keys()))
@@ -191,9 +155,7 @@ def compute_monthly_features(raw_data, tickers, n_mom=12):
     return features, next_returns, valid_tickers
 
 
-# ============================================================
-# 2. MODEL: ORCA Architecture (faithful to paper Section 3)
-# ============================================================
+# 2. MODEL: ORCA Architecture
 
 class PiecewiseLinearEncoding(nn.Module):
     """
@@ -275,9 +237,6 @@ class PiecewiseLinearEncoding(nn.Module):
 
 
 class TransformerEncoder(nn.Module):
-    """
-    Paper Section 3.1.2: Bidirectional transformer with [CLS] token.
-    """
     def __init__(self, d_embed=64, n_heads=4, n_layers=2, dropout=0.1):
         super().__init__()
         self.d_embed = d_embed
@@ -306,14 +265,6 @@ class TransformerEncoder(nn.Module):
 
 class ORCA(nn.Module):
     """
-    Full ORCA model: PLE + Transformer + Contrastive heads + PINN head.
-
-    Paper Section 3:
-      - Backbone: PLE encoder + Transformer -> h (representation)
-      - Instance projection head g_ins(h) -> z (for instance contrastive loss)
-      - Cluster projection head g_clu(h) -> y (soft cluster assignments)
-      - OU parameter head g_ou(h_bar_k) -> (theta_k, mu_k, sigma_k) per cluster
-
     Loss = L_ins + alpha * L_clu + beta * L_pinn
     """
     def __init__(self, n_features, n_clusters=10, n_bins=32, d_embed=64,
@@ -363,14 +314,6 @@ class ORCA(nn.Module):
         return {'h': h, 'z': z, 'y': y, 'y_logits': y_logits}
 
     def get_ou_params(self, h, y):
-        """
-        Compute per-cluster OU parameters via weighted average of representations.
-        Paper Equations (9-10).
-
-        h: (batch, d_embed)
-        y: (batch, n_clusters) — soft assignments
-        Returns: theta (K,), mu (K,), sigma (K,)
-        """
         # h_bar_k = sum(P_ik * h_i) / (sum(P_ik) + eps)
         # y.T @ h gives (n_clusters, d_embed)
         cluster_weights = y.sum(dim=0) + 1e-8  # (K,)
@@ -395,9 +338,7 @@ class ORCA(nn.Module):
         return x + torch.randn_like(x) * std
 
 
-# ============================================================
 # 3. LOSS FUNCTIONS
-# ============================================================
 
 def instance_contrastive_loss(z_a, z_b, temperature=0.5):
     """
@@ -425,10 +366,6 @@ def instance_contrastive_loss(z_a, z_b, temperature=0.5):
 
 
 def cluster_contrastive_loss(y_a, y_b, temperature=1.0):
-    """
-    Paper Equations (6-7): Cluster-level contrastive loss + entropy regularization.
-    y_a, y_b: (N, M) — soft cluster assignment probabilities.
-    """
     N = y_a.shape[0]
     y_a_norm = F.normalize(y_a, dim=1)
     y_b_norm = F.normalize(y_b, dim=1)
@@ -451,14 +388,6 @@ def cluster_contrastive_loss(y_a, y_b, temperature=1.0):
 
 
 def pinn_loss(returns, y, theta, mu, sigma, dt=1/12):
-    """
-    Paper Equation (11-12): Physics-informed OU regularization.
-
-    returns: (N, T) — time series of returns for each asset (monthly)
-    y: (N, K) — soft cluster assignments
-    theta, mu, sigma: (K,) — OU params per cluster
-    dt: time step (1/12 for monthly)
-    """
     N, T = returns.shape
     K = theta.shape[0]
 
@@ -493,9 +422,7 @@ def pinn_loss(returns, y, theta, mu, sigma, dt=1/12):
     return total_loss / max(count, 1)
 
 
-# ============================================================
 # 4. TRAINING
-# ============================================================
 
 class MonthlyDataset(Dataset):
     """Dataset for one month: features + return history."""
@@ -671,9 +598,7 @@ def train_orca(features_dict, returns_dict, valid_tickers,
     return model, scaler, feature_cols
 
 
-# ============================================================
 # 5. CLUSTER ASSIGNMENT (inference)
-# ============================================================
 
 def assign_clusters(model, scaler, features_df, feature_cols, device='cpu'):
     """
@@ -709,28 +634,10 @@ def assign_clusters_kmeans(features_df, feature_cols, scaler, n_clusters=10):
     return {t: int(c) for t, c in zip(tickers, labels)}
 
 
-# ============================================================
-# 6. TRADING STRATEGY (Paper Algorithm 1)
-# ============================================================
+# 6. TRADING STRATEGY 
+
 
 def run_trading_strategy(cluster_assignments, returns_this_month, prev_month_returns, gamma=1.0):
-    """
-    Paper Algorithm 1: Cluster-Based Mean-Reversion Strategy.
-
-    1. For each cluster, sort assets by prior month return (mom1)
-    2. Compute momentum spread for each asset
-    3. Long if spread < -gamma * sigma, short if spread > gamma * sigma
-    4. Equal-weight portfolio of all signaled assets
-    5. Return: log(1 + s(x) * R_{t+1}(x)) averaged over active assets
-
-    Args:
-        cluster_assignments: {ticker: cluster_id}
-        returns_this_month: {ticker: float} — actual returns realized this month
-        prev_month_returns: {ticker: float} — last month's returns (for ranking)
-        gamma: threshold multiplier (paper: 1.0)
-
-    Returns: portfolio log return for this month
-    """
     # Group by cluster
     clusters = {}
     for ticker, cid in cluster_assignments.items():
@@ -790,9 +697,8 @@ def run_trading_strategy(cluster_assignments, returns_this_month, prev_month_ret
     return np.mean(log_returns)
 
 
-# ============================================================
 # 7. BACKTEST
-# ============================================================
+ 
 
 def run_backtest(model, scaler, feature_cols, features_dict, returns_dict,
                  start_date, end_date, n_clusters=10, gamma=1.0, method='orca'):
@@ -870,9 +776,7 @@ def compute_backtest_metrics(results_df):
     }
 
 
-# ============================================================
-# 8. MAIN
-# ============================================================
+# 8. MAIN 
 
 def main():
     print("=" * 70)
@@ -958,33 +862,5 @@ def main():
     print(f"\nSaved model to datasets/orca_model.pt")
     print(f"Saved artifacts to datasets/orca_artifacts.pkl")
 
-    # --- Connection to your DQN pipeline ---
-    print(f"\n{'='*70}")
-    print(f"  NEXT STEP: Connect to DQN threshold agent")
-    print(f"{'='*70}")
-    print(f"""
-  To use ORCA clusters with your DQN adaptive threshold:
-
-  1. Run this script first to generate clusters
-  2. In train_adaptive_threshold.py, replace the ADF-based pair selection
-     with ORCA cluster assignments:
-
-       # Instead of: all cointegrated pairs from ADF test
-       # Use: within-cluster pairs from ORCA
-       clusters = assign_clusters(model, scaler, features_df, feature_cols)
-       for cluster_id in set(clusters.values()):
-           members = [t for t, c in clusters.items() if c == cluster_id]
-           # form pairs within this cluster
-           for a, b in combinations(members, 2):
-               ...  # compute spread, OU params, etc.
-
-  This gives Emily's 2x2 ablation:
-    - K-means + static threshold (baseline)
-    - K-means + DQN threshold  (does DQN help with simple clusters?)
-    - ORCA + static threshold  (does ORCA help with static execution?)
-    - ORCA + DQN threshold     (full system)
-    """)
-
-
-if __name__ == '__main__':
+ if __name__ == '__main__':
     main()
