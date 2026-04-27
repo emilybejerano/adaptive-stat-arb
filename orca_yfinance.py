@@ -18,6 +18,8 @@ Pipeline:
   4. Run the paper's Algorithm 1 (cluster-based mean-reversion strategy)
   5. Compare: K-means baseline vs ORCA
 
+Usage:
+  python orca_yfinance.py
 """
 
 import numpy as np
@@ -45,18 +47,35 @@ print(f"Device: {device}")
 # 1. DATA: Download + Feature Engineering
 # ============================================================
 
-# Same tickers as your existing pipeline
+# Expanded universe: ~120 liquid large-cap names across 11 GICS sectors
+# Target: ~8-12 stocks per cluster with K=15, giving PINN enough mass
 TICKERS = [
-    'XOM', 'CVX', 'COP', 'SLB', 'EOG',    # Energy
-    'JPM', 'BAC', 'GS', 'MS', 'C',          # Financials
-    'JNJ', 'PFE', 'UNH', 'MRK', 'ABT',      # Healthcare
-    'AAPL', 'MSFT', 'GOOG', 'META', 'NVDA',  # Tech
-    'PG', 'KO', 'PEP', 'WMT', 'COST',        # Consumer Staples
-    'CAT', 'DE', 'GE', 'HON', 'MMM',          # Industrials
-    'NEE', 'DUK', 'SO', 'D', 'AEP',           # Utilities
-    'AMT', 'PLD', 'CCI', 'SPG', 'EQIX',       # Real Estate
-    'LIN', 'APD', 'SHW', 'DD', 'FCX',         # Materials
-    'T',                                        # Telecom
+    # Energy (10)
+    'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'PXD', 'MPC', 'VLO', 'PSX', 'OXY',
+    # Financials (15)
+    'JPM', 'BAC', 'GS', 'MS', 'C', 'WFC', 'BLK', 'SCHW', 'AXP', 'USB',
+    'PNC', 'TFC', 'BK', 'CME', 'ICE',
+    # Healthcare (12)
+    'JNJ', 'PFE', 'UNH', 'MRK', 'ABT', 'LLY', 'BMY', 'AMGN', 'GILD',
+    'ISRG', 'TMO', 'MDT',
+    # Tech (15)
+    'AAPL', 'MSFT', 'GOOG', 'META', 'NVDA', 'AVGO', 'INTC', 'AMD', 'QCOM',
+    'TXN', 'ORCL', 'CRM', 'ADBE', 'IBM', 'NOW',
+    # Consumer Staples (10)
+    'PG', 'KO', 'PEP', 'WMT', 'COST', 'CL', 'GIS', 'K', 'MO', 'PM',
+    # Consumer Discretionary (10)
+    'AMZN', 'TSLA', 'HD', 'LOW', 'MCD', 'NKE', 'SBUX', 'TGT', 'TJX', 'ROST',
+    # Industrials (12)
+    'CAT', 'DE', 'GE', 'HON', 'MMM', 'UPS', 'FDX', 'LMT', 'RTX', 'BA',
+    'WM', 'ETN',
+    # Utilities (8)
+    'NEE', 'DUK', 'SO', 'D', 'AEP', 'SRE', 'EXC', 'XEL',
+    # Real Estate (8)
+    'AMT', 'PLD', 'CCI', 'SPG', 'EQIX', 'O', 'WELL', 'DLR',
+    # Materials (8)
+    'LIN', 'APD', 'SHW', 'DD', 'FCX', 'NEM', 'NUE', 'ECL',
+    # Communication (7)
+    'T', 'VZ', 'DIS', 'CMCSA', 'NFLX', 'TMUS', 'CHTR',
 ]
 
 
@@ -203,9 +222,9 @@ class PiecewiseLinearEncoding(nn.Module):
             col = X_train[:, k]
             col = col[~torch.isnan(col)]
             if len(col) < self.n_bins:
-                self.boundaries[k] = torch.linspace(col.min(), col.max(), self.n_bins + 1)
+                self.boundaries[k] = torch.linspace(col.min(), col.max(), self.n_bins + 1, device=col.device)
             else:
-                quantiles = torch.linspace(0, 1, self.n_bins + 1)
+                quantiles = torch.linspace(0, 1, self.n_bins + 1, device=col.device)
                 self.boundaries[k] = torch.quantile(col, quantiles)
             # Ensure first and last are -inf, +inf
             self.boundaries[k, 0] = -1e6
@@ -863,7 +882,8 @@ def main():
 
     # --- Data ---
     os.makedirs('datasets', exist_ok=True)
-    raw_data = download_data(TICKERS, start='2005-01-01', end='2023-12-31')
+    raw_data = download_data(TICKERS, start='2005-01-01', end='2023-12-31',
+                             cache_path='datasets/orca_prices_expanded.parquet')
     features_dict, returns_dict, valid_tickers = compute_monthly_features(raw_data, TICKERS, n_mom=12)
     print(f"\nBuilt features for {len(features_dict)} months, {len(valid_tickers)} tickers")
 
@@ -872,12 +892,12 @@ def main():
     feature_cols = list(sample_df.columns)
 
     # --- Train ORCA ---
-    # Paper: K=30 clusters for 3000+ stocks. We use K=10 for ~46 stocks.
-    N_CLUSTERS = 10
+    # Paper: K=30 clusters for 3000+ stocks. We use K=15 for ~115 stocks (~8 per cluster).
+    N_CLUSTERS = 15
 
     model, scaler, feature_cols = train_orca(
         features_dict, returns_dict, valid_tickers,
-        n_clusters=N_CLUSTERS, n_epochs=50, lr=0.002, batch_size=256,
+        n_clusters=N_CLUSTERS, n_epochs=80, lr=0.002, batch_size=512,
         alpha=1.0, beta=1.0, n_bins=32, d_embed=64,
         mask_ratio=0.1, noise_std=0.1,
         train_end='2018-12-31', val_end='2019-12-31'
@@ -958,6 +978,7 @@ def main():
            for a, b in combinations(members, 2):
                ...  # compute spread, OU params, etc.
 
+  This gives Emily's 2x2 ablation:
     - K-means + static threshold (baseline)
     - K-means + DQN threshold  (does DQN help with simple clusters?)
     - ORCA + static threshold  (does ORCA help with static execution?)
