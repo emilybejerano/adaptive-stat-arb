@@ -1,7 +1,6 @@
 name: elen4904
 channels:
   - conda-forge
-  - defaults
 dependencies:
   - python=3.10
   - pandas
@@ -11,10 +10,13 @@ dependencies:
   - matplotlib
   - seaborn
   - jupyter
+  - pyarrow=14.0.2
+  - pytorch
+  - torchvision
+  - torchaudio
   - pip
   - pip:
-    - yfinance
-    - pandas-datareader
-    - xgboost
-    - torch
-    - gymnasium
+      - yfinance
+      - pandas-datareader
+      - gymnasium
+      - xgboost
